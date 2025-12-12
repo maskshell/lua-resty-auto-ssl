@@ -1,3 +1,18 @@
+> [!WARNING] 
+> ![](https://img.shields.io/badge/Project%20Status-Abandoned-orange)  
+> This project is currently abandoned, if you're looking for an open source ACME client with built in SSL/TLS support, feel free to try out other related projects.
+>
+> * [acme.sh](https://github.com/acmesh-official/acme.sh)
+> * [acme-companion](https://github.com/nginx-proxy/acme-companion)
+> * [dehydrated-io](https://github.com/dehydrated-io/dehydrated)
+> * [win-acme](https://github.com/win-acme)
+
+> [!NOTE] 
+> ![](https://img.shields.io/badge/Maintainers-Wanted-blue)  
+> If you're interested in regularly contributing to **lua-resty-auto-ssl** (with monetary compensation included) - feel free to reach out to us at support@zerossl.com  
+  
+----
+
 # lua-resty-auto-ssl
 
 [![CI](https://github.com/GUI/lua-resty-auto-ssl/workflows/CI/badge.svg)](https://github.com/GUI/lua-resty-auto-ssl/actions?workflow=CI)
@@ -414,3 +429,18 @@ To release a new version to LuaRocks:
 - Open source the MongoDB storage adapter we're using in API Umbrella.
 - Add the ability to encrypt data at rest for any storage adapter (based on what we built for API Umbrella's MongoDB storage adapter).
 - We currently rely on [dehydrated](https://github.com/lukas2511/dehydrated) as our Let's Encrypt client. It's called in a non-blocking fashion via [lua-resty-shell](https://github.com/juce/lua-resty-shell) and [sockproc](https://github.com/juce/sockproc), however it might be simpler to eventually replace this approach with a native OpenResty Let's Encrypt client someday.
+
+## Disclaimer
+
+> [!NOTE]
+> This repository is officially maintained by <strong>ZeroSSL</strong> as part of our commitment to secure and reliable SSL/TLS solutions. We welcome contributions and feedback from the community!  
+> For more information about our services, including free and paid SSL/TLS certificates, visit https://zerossl.com.
+<p align="center">
+	<a href="https://zerossl.com.com">
+		<picture>
+			<source media="(prefers-color-scheme: dark)" srcset="https://zerossl.com/assets/images/zerossl_logo_white.svg">
+			<source media="(prefers-color-scheme: light)" srcset="https://zerossl.com/assets/images/zerossl_logo.svg">
+			<img src="https://zerossl.com/assets/images/zerossl_logo.svg" alt="ZeroSSL" width="256">
+		</picture>
+	</a>
+</p>

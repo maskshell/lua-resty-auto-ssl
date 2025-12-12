@@ -135,7 +135,16 @@ local function get_cert_der(auto_ssl_instance, domain, ssl_options)
   end
 
   if cert and cert["fullchain_pem"] and cert["privkey_pem"] then
-    local cert_der = convert_to_der_and_cache(domain, cert)
+    local cert_der, cert_der_err = convert_to_der_and_cache(domain, cert)
+
+    if cert_der_err then
+      ngx.log(ngx.ERR, "auto-ssl: error converting certificate for ", domain, ": ", cert_der_err)
+    end
+    
+    if not cert_der then
+      return nil, "empty cert_der received"
+    end
+
     cert_der["newly_issued"] = false
     return cert_der
   end
@@ -144,7 +153,15 @@ local function get_cert_der(auto_ssl_instance, domain, ssl_options)
   if not ssl_options or ssl_options["generate_certs"] ~= false then
     cert = issue_cert(auto_ssl_instance, storage, domain)
     if cert and cert["fullchain_pem"] and cert["privkey_pem"] then
-      local cert_der = convert_to_der_and_cache(domain, cert)
+      local cert_der, cert_der_err = convert_to_der_and_cache(domain, cert)
+      if cert_der_err then
+        ngx.log(ngx.ERR, "auto-ssl: error converting certificate for ", domain, ": ", cert_der_err)
+      end
+      
+      if not cert_der then
+        return nil, "empty cert_der received"
+      end
+
       cert_der["newly_issued"] = true
       return cert_der
     end
@@ -159,7 +176,10 @@ end
 local function get_ocsp_response(fullchain_der, auto_ssl_instance)
   -- Pull the OCSP URL to hit out of the certificate chain.
   local ocsp_url, ocsp_responder_err = ocsp.get_ocsp_responder_from_der_chain(fullchain_der)
-  if not ocsp_url then
+  if not ocsp_url and not ocsp_responder_err then
+	-- There is no OCSP responder, stop silently
+	return "", nil
+  elseif not ocsp_url then
     return nil, "failed to get OCSP responder: " .. (ocsp_responder_err or "")
   end
 
@@ -236,9 +256,11 @@ local function set_ocsp_stapling(domain, cert_der, auto_ssl_instance)
   end
 
   -- Set the OCSP stapling response.
-  local ok, ocsp_status_err = ocsp.set_ocsp_status_resp(ocsp_resp)
-  if not ok then
-    return false, "failed to set ocsp status resp: " .. (ocsp_status_err or "")
+  if ocsp_resp ~= "" then
+    local ok, ocsp_status_err = ocsp.set_ocsp_status_resp(ocsp_resp)
+    if not ok then
+      return false, "failed to set ocsp status resp: " .. (ocsp_status_err or "")
+    end
   end
 
   return true
