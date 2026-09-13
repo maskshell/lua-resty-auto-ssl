@@ -5,8 +5,11 @@ local shell_execute = require "resty.auto-ssl.utils.shell_execute"
 function _M.issue_cert(auto_ssl_instance, domain)
   assert(type(domain) == "string", "domain must be a string")
 
-  local lua_root = auto_ssl_instance.lua_root
-  assert(type(lua_root) == "string", "lua_root must be a string")
+  local dehydrated_path = auto_ssl_instance:get_bin("dehydrated")
+  assert(type(dehydrated_path) == "string", "unable to resolve dehydrated path")
+
+  local hooks_path = auto_ssl_instance:get_bin("letsencrypt_hooks")
+  assert(type(hooks_path) == "string", "unable to resolve letsencrypt_hooks path")
 
   local base_dir = auto_ssl_instance:get("dir")
   assert(type(base_dir) == "string", "dir must be a string")
@@ -27,14 +30,14 @@ function _M.issue_cert(auto_ssl_instance, domain)
     "env",
     "HOOK_SECRET=" .. hook_secret,
     "HOOK_SERVER_PORT=" .. hook_port,
-    lua_root .. "/bin/resty-auto-ssl/dehydrated",
+    dehydrated_path,
     "--cron",
     "--accept-terms",
     "--no-lock",
     "--domain", domain,
     "--challenge", "http-01",
     "--config", base_dir .. "/letsencrypt/config",
-    "--hook", lua_root .. "/bin/resty-auto-ssl/letsencrypt_hooks",
+    "--hook", hooks_path,
   })
 
   -- Cleanup dehydrated files after running to prevent temp files from piling

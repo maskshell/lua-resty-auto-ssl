@@ -1,5 +1,28 @@
 # lua-resty-auto-ssl Change Log
 
+## 0.14.0 - 2026-09-13
+
+### Upgrade Notes
+
+This fork is now distributed through two channels: the OPM package (`maskshell/lua-resty-auto-ssl`) ships Lua code only, and the executable payload (`dehydrated`, `letsencrypt_hooks`, `start_sockproc`, `sockproc`) ships as a GitHub Release asset (`resty-auto-ssl-bin-<version>-linux-amd64.tar.gz`) with an `install.sh` installer. Install both channels for full functionality — see the README "Installation" section. If the upstream `GUI/lua-resty-auto-ssl` package is currently installed via opm, run `opm rm GUI/lua-resty-auto-ssl` first: the two packages install into identical lualib paths and opm has no replace semantics.
+
+### Added
+
+- Dual-channel distribution: OPM package (Lua files only) plus a GitHub Release bin asset containing `bin/resty-auto-ssl/{dehydrated,letsencrypt_hooks,start_sockproc,sockproc}` and an `install.sh` that installs the payload module-adjacent (`<resty-lualib-dir>/auto-ssl/bin/resty-auto-ssl/`) and fails fast unless the target directory contains both `auto-ssl.lua` and `auto-ssl/`.
+- New `bin_dir` option (absolute path) to override binary resolution, useful for a custom `sockproc` or other architectures. Resolution order: explicit `bin_dir`, then the module-adjacent `bin/resty-auto-ssl/` directory, then the legacy `<lua_root>/bin/resty-auto-ssl/` location (LuaRocks installs keep working). `sockproc` itself is resolved by the `start_sockproc` script relative to its own location, so a custom binary must sit in the same directory as `start_sockproc`.
+- Vendored `lib/resty/auto-ssl/vendor/shell.lua` is now committed to the repository (previously gitignored and injected by `make`), so published OPM packages are loadable out of the box.
+- `bin/resty-auto-ssl/dehydrated` is now committed with a provenance header, and the flat `bin/letsencrypt_hooks`/`bin/start_sockproc` scripts moved under `bin/resty-auto-ssl/` (Makefile install paths updated accordingly).
+- CI workflow and a tag-triggered OPM publish workflow that assembles the bin asset, uploads the package, and verifies the re-downloaded published artifact.
+
+### Changed
+
+- Certificates without an OCSP responder URL are now silently skipped during OCSP stapling instead of failing, matching Let's Encrypt's post-OCSP era behavior (upstream fix 077a68f).
+
+### Fixed
+
+- Fixed a require-time crash when the module was loaded from shallow package paths (e.g. `opm --cwd` installs): the `lua_root` regex returned `nil` on paths with fewer than five slashes and the subsequent string operation crashed. `lua_root` is now computed lazily on first use and is nil-safe (`auto_ssl.lua_root` remains available, `nil` until computed).
+- Packaging: `dist.ini` now sets `doc_dir = lib` (previously `doc_dir = .`, which shipped every repository markdown file into the published package).
+
 ## 0.13.1 - 2019-10-01
 
 ### Changed

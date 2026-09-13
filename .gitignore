@@ -1,5 +1,6 @@
 /build
-/lib/resty/auto-ssl/vendor/*
 /lua-resty-auto-ssl-*
 !/lua-resty-auto-ssl-*.rockspec
 /spec/tmp
+/bin/resty-auto-ssl/sockproc
+/PLAN-opm-release.md

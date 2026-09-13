@@ -1,8 +1,10 @@
 ROOT_DIR:=$(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 BUILD_DIR?=$(ROOT_DIR)/build
 
-DEHYDRATED_VERSION:=05eda91a2fbaed1e13c733230238fc68475c535e
-LUA_RESTY_SHELL_VERSION:=955243d70506c21e7cc29f61d745d1a8a718994f
+# dehydrated and lua-resty-shell are vendored as committed files — their
+# upstream pins live in the provenance headers of bin/resty-auto-ssl/dehydrated
+# and lib/resty/auto-ssl/vendor/shell.lua. Only sockproc is still fetched and
+# built from source:
 SOCKPROC_VERSION:=92aba736027bb5d96e190b71555857ac5bb6b2be
 
 RUNTIME_DEPENDENCIES:=bash curl cut date diff grep mktemp openssl sed
@@ -18,8 +20,6 @@ RUNTIME_DEPENDENCIES:=bash curl cut date diff grep mktemp openssl sed
 
 all: \
 	check-dependencies \
-	$(BUILD_DIR)/stamp-dehydrated-2-$(DEHYDRATED_VERSION) \
-	$(BUILD_DIR)/stamp-lua-resty-shell-$(LUA_RESTY_SHELL_VERSION) \
 	$(BUILD_DIR)/stamp-sockproc-2-$(SOCKPROC_VERSION)
 
 check-dependencies:
@@ -47,6 +47,7 @@ install: check-dependencies
 	install -m 644 lib/resty/auto-ssl/storage_adapters/file.lua $(INST_LUADIR)/resty/auto-ssl/storage_adapters/file.lua
 	install -m 644 lib/resty/auto-ssl/storage_adapters/redis.lua $(INST_LUADIR)/resty/auto-ssl/storage_adapters/redis.lua
 	install -d $(INST_LUADIR)/resty/auto-ssl/utils
+	install -m 644 lib/resty/auto-ssl/utils/has_certificate.lua $(INST_LUADIR)/resty/auto-ssl/utils/has_certificate.lua
 	install -m 644 lib/resty/auto-ssl/utils/parse_openssl_time.lua $(INST_LUADIR)/resty/auto-ssl/utils/parse_openssl_time.lua
 	install -m 644 lib/resty/auto-ssl/utils/random_seed.lua $(INST_LUADIR)/resty/auto-ssl/utils/random_seed.lua
 	install -m 644 lib/resty/auto-ssl/utils/shell_execute.lua $(INST_LUADIR)/resty/auto-ssl/utils/shell_execute.lua
@@ -55,25 +56,18 @@ install: check-dependencies
 	install -d $(INST_LUADIR)/resty/auto-ssl/vendor
 	install -m 644 lib/resty/auto-ssl/vendor/shell.lua $(INST_LUADIR)/resty/auto-ssl/vendor/shell.lua
 	install -d $(INST_BINDIR)/resty-auto-ssl
-	install -m 755 bin/letsencrypt_hooks $(INST_BINDIR)/resty-auto-ssl/letsencrypt_hooks
-	install -m 755 bin/start_sockproc $(INST_BINDIR)/resty-auto-ssl/start_sockproc
-	install -m 755 $(BUILD_DIR)/bin/dehydrated $(INST_BINDIR)/resty-auto-ssl/dehydrated
+	install -m 755 bin/resty-auto-ssl/letsencrypt_hooks $(INST_BINDIR)/resty-auto-ssl/letsencrypt_hooks
+	install -m 755 bin/resty-auto-ssl/start_sockproc $(INST_BINDIR)/resty-auto-ssl/start_sockproc
+	install -m 755 bin/resty-auto-ssl/dehydrated $(INST_BINDIR)/resty-auto-ssl/dehydrated
 	install -m 755 $(BUILD_DIR)/bin/sockproc $(INST_BINDIR)/resty-auto-ssl/sockproc
 
 $(BUILD_DIR):
 	mkdir -p $@
 
-$(BUILD_DIR)/stamp-dehydrated-2-$(DEHYDRATED_VERSION): | $(BUILD_DIR)
-	rm -f $(BUILD_DIR)/stamp-dehydrated-*
-	mkdir -p $(BUILD_DIR)/bin
-	curl -sSLo $(BUILD_DIR)/bin/dehydrated "https://raw.githubusercontent.com/lukas2511/dehydrated/$(DEHYDRATED_VERSION)/dehydrated"
-	chmod +x $(BUILD_DIR)/bin/dehydrated
-	touch $@
-
-$(BUILD_DIR)/stamp-lua-resty-shell-$(LUA_RESTY_SHELL_VERSION): | $(BUILD_DIR)
-	rm -f $(BUILD_DIR)/stamp-lua-resty-shell-*
-	curl -sSLo $(ROOT_DIR)/lib/resty/auto-ssl/vendor/shell.lua "https://raw.githubusercontent.com/juce/lua-resty-shell/$(LUA_RESTY_SHELL_VERSION)/lib/resty/shell.lua"
-	touch $@
+# dehydrated and vendor/shell.lua are committed at their pinned versions under
+# bin/resty-auto-ssl/ and lib/resty/auto-ssl/vendor/ (see their provenance
+# headers); only sockproc (an arch-specific compiled binary) is still fetched
+# and built from source at build time.
 
 $(BUILD_DIR)/stamp-sockproc-2-$(SOCKPROC_VERSION): | $(BUILD_DIR)
 	rm -f $(BUILD_DIR)/stamp-sockproc-*

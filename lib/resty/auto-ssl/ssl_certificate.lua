@@ -140,7 +140,7 @@ local function get_cert_der(auto_ssl_instance, domain, ssl_options)
     if cert_der_err then
       ngx.log(ngx.ERR, "auto-ssl: error converting certificate for ", domain, ": ", cert_der_err)
     end
-    
+
     if not cert_der then
       return nil, "empty cert_der received"
     end
@@ -157,7 +157,7 @@ local function get_cert_der(auto_ssl_instance, domain, ssl_options)
       if cert_der_err then
         ngx.log(ngx.ERR, "auto-ssl: error converting certificate for ", domain, ": ", cert_der_err)
       end
-      
+
       if not cert_der then
         return nil, "empty cert_der received"
       end

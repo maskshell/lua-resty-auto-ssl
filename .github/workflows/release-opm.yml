@@ -1,0 +1,212 @@
+name: release-opm
+
+# C4.2 of PLAN-opm-release.md (v2.1): tag-triggered dual publish.
+#   Channel B — GitHub Release asset resty-auto-ssl-bin-<version>-linux-amd64.tar.gz:
+#               bin/resty-auto-ssl/{dehydrated,letsencrypt_hooks,start_sockproc,sockproc}
+#               + install.sh at archive root, exec bits asserted via `tar -tvzf` (m2).
+#   Channel A — `opm build` + `opm upload` from secrets OPM_ACCOUNT /
+#               OPM_GITHUB_TOKEN (C4.3), NEVER with -v (M2: verbose echoes the
+#               X-Account/X-Token headers via curl -vv).
+#   VERIFY (N4/B1/R1) — opm indexes uploads asynchronously; poll the published
+#               tarball URL with backoff (up to 60 min) until fetchable, then
+#               validate the RE-DOWNLOADED artifact (never trust upload exit code).
+# One-time repo secrets (C4.3): OPM_ACCOUNT=maskshell, OPM_GITHUB_TOKEN
+# (GitHub PAT with scopes user:email + read:org ONLY).
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # amd64 runner: sockproc is compiled from source for linux-amd64 (N2/D2).
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Parse version from dist.ini (single source of truth) and cross-check tag
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*//p' dist.ini | head -n 1 | tr -d '[:space:]')"
+          [ -n "$VERSION" ] || { echo "::error::cannot parse version from dist.ini"; exit 1; }
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$TAG_VERSION" != "$VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match dist.ini version $VERSION"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "releasing version $VERSION (tag $GITHUB_REF_NAME)"
+
+      - name: Install toolchain (opm CLI + luajit for opm build bytecode checks)
+        run: |
+          set -euo pipefail
+          # OpenResty from the official apt repo: provides the luajit that
+          # `opm build` bytecode-checks with, and the site/ tree that the
+          # cloned opm CLI resolves via FindBin::RealBin/../site.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends ca-certificates curl gnupg
+          curl -fsSL https://openresty.org/package/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/openresty.gpg
+          CODENAME="$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")"
+          echo "deb [signed-by=/usr/share/keyrings/openresty.gpg] http://openresty.org/package/ubuntu ${CODENAME} main" \
+            | sudo tee /etc/apt/sources.list.d/openresty.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openresty
+          sudo ln -sf /usr/local/openresty/luajit/bin/luajit /usr/local/bin/luajit
+          echo "/usr/local/openresty/bin" >> "$GITHUB_PATH"
+          git clone --depth 1 https://github.com/openresty/opm "$RUNNER_TEMP/opm-cli"
+          # opm locates the OpenResty installation via FindBin::RealBin/../site
+          # and installs dist.ini `requires` deps into it — give the clone its
+          # own writable throwaway site/ so nothing touches the system tree.
+          mkdir -p "$RUNNER_TEMP/opm-cli/site/lualib"
+          echo "$RUNNER_TEMP/opm-cli/bin" >> "$GITHUB_PATH"
+          luajit -v
+          opm -V
+
+      - name: Build sockproc from pin (R5 — pin rot fails loudly)
+        run: |
+          set -euo pipefail
+          # Source repo pinned by Makefile SOCKPROC_VERSION (juce/sockproc).
+          PIN=92aba736027bb5d96e190b71555857ac5bb6b2be
+          SRC="$RUNNER_TEMP/sockproc-src"
+          rm -rf "$SRC"
+          mkdir -p "$SRC"
+          # curl -f: HTTP failure (pin removed upstream) must fail this step loudly
+          curl -fsSLo "$SRC/sockproc-$PIN.tar.gz" "https://github.com/juce/sockproc/archive/$PIN.tar.gz"
+          tar -xzf "$SRC/sockproc-$PIN.tar.gz" -C "$SRC"
+          make -C "$SRC/sockproc-$PIN"
+          test -x "$SRC/sockproc-$PIN/sockproc"
+          file "$SRC/sockproc-$PIN/sockproc" | grep -qi ELF
+          echo "SOCKPROC_BIN=$SRC/sockproc-$PIN/sockproc" >> "$GITHUB_ENV"
+          echo "sockproc built from pin $PIN"
+
+      - name: Assemble bin asset and assert exec modes (m2)
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/bin-asset"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE/bin/resty-auto-ssl"
+          install -m 0755 bin/resty-auto-ssl/dehydrated "$STAGE/bin/resty-auto-ssl/dehydrated"
+          install -m 0755 bin/resty-auto-ssl/letsencrypt_hooks "$STAGE/bin/resty-auto-ssl/letsencrypt_hooks"
+          install -m 0755 bin/resty-auto-ssl/start_sockproc "$STAGE/bin/resty-auto-ssl/start_sockproc"
+          install -m 0755 "$SOCKPROC_BIN" "$STAGE/bin/resty-auto-ssl/sockproc"
+          install -m 0755 scripts/install.sh "$STAGE/install.sh"
+          ASSET="resty-auto-ssl-bin-${VERSION}-linux-amd64.tar.gz"
+          tar -czf "$GITHUB_WORKSPACE/$ASSET" -C "$STAGE" install.sh bin
+          LISTING="$(tar -tvzf "$GITHUB_WORKSPACE/$ASSET")"
+          printf '%s\n' "$LISTING"
+          # All five entries must be regular files with the owner-exec bit set.
+          for f in install.sh \
+                   bin/resty-auto-ssl/dehydrated \
+                   bin/resty-auto-ssl/letsencrypt_hooks \
+                   bin/resty-auto-ssl/start_sockproc \
+                   bin/resty-auto-ssl/sockproc; do
+            MODE="$(printf '%s\n' "$LISTING" | awk -v f="$f" '$NF == f { print $1; exit }')"
+            if [ -z "$MODE" ]; then
+              echo "::error::$f missing from asset"
+              exit 1
+            fi
+            case "$MODE" in
+              -??x*) : ;;
+              *) echo "::error::$f is not a regular owner-executable file in the asset (mode: $MODE)"; exit 1 ;;
+            esac
+          done
+          echo "ASSET=$ASSET" >> "$GITHUB_ENV"
+          echo "bin asset assembled: $ASSET (all five entries executable)"
+
+      - name: Create GitHub release and attach bin asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ASSET }}
+          fail_on_unmatched_files: true
+
+      - name: Write ~/.opmrc from secrets (C4.3/M3/R4 — chmod 0600, never echoed)
+        env:
+          OPM_ACCOUNT: ${{ secrets.OPM_ACCOUNT }}
+          OPM_GITHUB_TOKEN: ${{ secrets.OPM_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OPM_ACCOUNT" ]; then
+            echo "::error::repo secret OPM_ACCOUNT is not set (plan C4.3)"
+            exit 1
+          fi
+          if [ -z "$OPM_GITHUB_TOKEN" ]; then
+            echo "::error::repo secret OPM_GITHUB_TOKEN is not set (plan C4.3)"
+            exit 1
+          fi
+          # Validate token format without printing it (R4: no echo of secrets).
+          printf '%s' "$OPM_GITHUB_TOKEN" | grep -qE '^[a-z0-9_]{40,255}$' \
+            || { echo "::error::OPM_GITHUB_TOKEN does not match [a-z0-9_]{40,255}; opm would reject it"; exit 1; }
+          # upload_server/download_server are known opm rc keys and required.
+          umask 077
+          cat > "$HOME/.opmrc" <<EOF
+          github_account = $OPM_ACCOUNT
+          github_token = $OPM_GITHUB_TOKEN
+          upload_server = https://opm.openresty.org
+          download_server = https://opm.openresty.org
+          EOF
+          chmod 0600 "$HOME/.opmrc"
+          echo "~/.opmrc written (0600; account/token from secrets, never logged)"
+
+      - name: opm build + opm upload (M2 — NEVER with -v)
+        run: |
+          set -euo pipefail
+          opm build
+          test -f "lua-resty-auto-ssl-${VERSION}.tar.gz"
+          ls -l "lua-resty-auto-ssl-${VERSION}.tar.gz"
+          # No -v anywhere: opm's verbose flag drives curl -vv and echoes the
+          # X-Account/X-Token auth headers (M2).
+          opm upload
+          echo "opm upload submitted for $VERSION (indexing is asynchronous)"
+
+      - name: VERIFY published OPM artifact (N4 — poll <= 60 min, inspect re-download)
+        run: |
+          set -euo pipefail
+          URL="https://opm.openresty.org/api/pkg/tarball/maskshell/lua-resty-auto-ssl-${VERSION}.opm.tar.gz"
+          TMP="$RUNNER_TEMP/verify"
+          rm -rf "$TMP"
+          mkdir -p "$TMP"
+          echo "polling $URL"
+          DEADLINE=$((SECONDS + 3600))
+          DELAY=15
+          while :; do
+            CODE="$(curl -sS -o "$TMP/probe.bin" -w '%{http_code}' "$URL")" || CODE=000
+            if [ "$CODE" = "200" ]; then
+              break
+            fi
+            if [ "$SECONDS" -ge "$DEADLINE" ]; then
+              echo "::error::published tarball not fetchable after 60 min (last HTTP status: $CODE)"
+              exit 1
+            fi
+            echo "not indexed yet (HTTP $CODE); retrying in ${DELAY}s"
+            sleep "$DELAY"
+            DELAY=$((DELAY * 2))
+            [ "$DELAY" -le 120 ] || DELAY=120
+          done
+          curl -fsSLo "$TMP/published.opm.tar.gz" "$URL"
+          tar -xzf "$TMP/published.opm.tar.gz" -C "$TMP"
+          PUBDIR="$(find "$TMP" -maxdepth 1 -type d -name 'lua-resty-auto-ssl-*' | head -n 1)"
+          if [ -z "$PUBDIR" ]; then
+            echo "::error::unexpected published tarball layout (no lua-resty-auto-ssl-* root dir)"
+            exit 1
+          fi
+          echo "inspecting re-downloaded artifact: $PUBDIR"
+          # (1) vendored shell.lua present (hard require at utils/shell_execute.lua)
+          test -f "$PUBDIR/lib/resty/auto-ssl/vendor/shell.lua" \
+            || { echo "::error::vendor/shell.lua missing from PUBLISHED artifact"; exit 1; }
+          # (2) correct version in the published dist.ini (server-build emits `version = X`)
+          grep -Fx "version = ${VERSION}" "$PUBDIR/dist.ini" \
+            || { echo "::error::published dist.ini version mismatch (expected $VERSION)"; exit 1; }
+          # (3) Lua payload complete vs repo lib/
+          (find lib -name '*.lua' | sed 's#^lib/##' | sort) > "$TMP/expected-lua.txt"
+          (cd "$PUBDIR" && find lib -name '*.lua' | sed 's#^lib/##' | sort) > "$TMP/actual-lua.txt"
+          diff -u "$TMP/expected-lua.txt" "$TMP/actual-lua.txt" \
+            || { echo "::error::published Lua payload mismatch vs lib/"; exit 1; }
+          # (4) A4: published ssl_certificate.lua carries the OCSP silent-skip code shape
+          grep -F 'if not ocsp_url and not ocsp_responder_err' "$PUBDIR/lib/resty/auto-ssl/ssl_certificate.lua" \
+            || { echo "::error::OCSP fix code shape missing from PUBLISHED artifact"; exit 1; }
+          echo "VERIFY OK: published $VERSION artifact inspected (shell.lua, dist.ini version, full Lua payload, OCSP shape)"
