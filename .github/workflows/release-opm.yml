@@ -138,9 +138,16 @@ jobs:
             echo "::error::repo secret OPM_GITHUB_TOKEN is not set (plan C4.3)"
             exit 1
           fi
+          # Trim surrounding whitespace (paste artifacts) — tokens never
+          # contain whitespace, and opm would reject a padded value.
+          OPM_GITHUB_TOKEN="$(printf '%s' "$OPM_GITHUB_TOKEN" | tr -d '[:space:]')"
+          export OPM_GITHUB_TOKEN
           # Validate token format without printing it (R4: no echo of secrets).
-          printf '%s' "$OPM_GITHUB_TOKEN" | grep -qE '^[a-z0-9_]{40,255}$' \
-            || { echo "::error::OPM_GITHUB_TOKEN does not match [a-z0-9_]{40,255}; opm would reject it"; exit 1; }
+          # Mirrors opm's own check (bin/opm: /^[a-z0-9_]{40,255}$/i) — note
+          # the case-insensitivity: classic PATs are mixed-case base62.
+          TOKEN_LEN="${#OPM_GITHUB_TOKEN}"
+          printf '%s' "$OPM_GITHUB_TOKEN" | grep -qE '^[a-zA-Z0-9_]{40,255}$' \
+            || { echo "::error::OPM_GITHUB_TOKEN (length $TOKEN_LEN) does not match opm's /^[a-z0-9_]{40,255}$/i after whitespace trim; expected a classic PAT (ghp_..., 40 chars)"; exit 1; }
           # upload_server/download_server are known opm rc keys and required.
           umask 077
           cat > "$HOME/.opmrc" <<EOF
