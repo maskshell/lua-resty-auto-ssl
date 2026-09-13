@@ -91,7 +91,9 @@ jobs:
           SLASHES="$(printf '%s' "$DEEP_PATH" | tr -cd '/' | wc -c | tr -d '[:space:]')"
           echo "deep fixture path: $DEEP_PATH (slashes: $SLASHES)"
           [ "$SLASHES" -ge 5 ] || { echo "::error::fixture path has fewer than 5 slashes"; exit 1; }
-          resty -e "package.path='$DEEP_PATH/?.lua;'..package.path; local m=require('resty.auto-ssl'); assert(m.get_bin)"
+          # The package.path entry must be the PARENT of the resty/ dir (the
+          # "?.lua" template gets "resty/auto-ssl" substituted into it).
+          resty -e "package.path='$(dirname "$DEEP_PATH")/?.lua;'..package.path; local m=require('resty.auto-ssl'); assert(m.get_bin)"
           echo "deep-layout require OK"
 
       - name: Install opm CLI (clone openresty/opm; core-perl + curl only)
