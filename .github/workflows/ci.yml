@@ -135,7 +135,7 @@ jobs:
           grep '\.lua$' "$RUNNER_TEMP/tar-entries.txt" | grep '^lib/' | sed 's#^lib/##' > "$RUNNER_TEMP/actual-lua.txt"
           diff -u "$RUNNER_TEMP/expected-lua.txt" "$RUNNER_TEMP/actual-lua.txt" \
             || { echo "::error::Lua payload mismatch vs lib/"; exit 1; }
-          grep -q '^lib/resty/auto-ssl/vendor/shell.lua$' "$RUNNER_TEMP/actual-lua.txt" \
+          grep -q '^resty/auto-ssl/vendor/shell.lua$' "$RUNNER_TEMP/actual-lua.txt" \
             || { echo "::error::vendor/shell.lua missing from tarball (M1 regression)"; exit 1; }
           # (2) NO non-.lua files under lib/ (directory entries end in / and are exempt)
           NON_LUA="$(grep -E '^lib/' "$RUNNER_TEMP/tar-entries.txt" | grep -vE '/$' | grep -vE '\.lua$' || true)"
