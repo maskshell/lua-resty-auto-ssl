@@ -253,4 +253,11 @@ describe("bin resolution", function()
 
     assert.equal(module_dir .. "/resty/auto-ssl/bin/resty-auto-ssl/start_sockproc", auto_ssl.get_bin(auto_ssl, "start_sockproc"))
   end)
+
+  it("tolerates the dot-call convenience without an explicit self", function()
+    local module_dir = make_module_adjacent_fixture()
+    local auto_ssl = reload_auto_ssl(relative_to_cwd(module_dir) .. "/?.lua")
+
+    assert.equal(module_dir .. "/resty/auto-ssl/bin/resty-auto-ssl/dehydrated", auto_ssl.get_bin("dehydrated"))
+  end)
 end)

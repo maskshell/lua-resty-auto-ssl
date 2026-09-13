@@ -212,7 +212,7 @@ jobs:
           # (N2: sockproc is resolved by start_sockproc's script-relative logic,
           # not from Lua — asserted as installed + executable below).
           for name in dehydrated letsencrypt_hooks start_sockproc; do
-            P="$(resty -e "package.path='$(dirname "$TARGET")/?.lua;'..package.path; local m=require('resty.auto-ssl'); print(assert(m.get_bin('$name')))")"
+            P="$(resty -e "package.path='$(dirname "$TARGET")/?.lua;'..package.path; local m=require('resty.auto-ssl'); print(assert(m.get_bin(m, '$name')))")"
             echo "get_bin('$name') -> $P"
             test -x "$P" || { echo "::error::get_bin('$name') path not executable: $P"; exit 1; }
             case "$P" in

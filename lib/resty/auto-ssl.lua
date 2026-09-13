@@ -143,6 +143,12 @@ end
 --
 -- Returns nil if no path could be resolved.
 function _M.get_bin(self, name)
+  -- Tolerate the dot-call convenience: get_bin("dehydrated") without an
+  -- explicit self resolves against the module table.
+  if type(self) ~= "table" then
+    self, name = _M, self
+  end
+
   -- Rule 1 is strictly per-instance: an instance that never set "bin_dir"
   -- never inherits another instance's override. The module-level mirror is
   -- consulted only when called on the module table itself (see the
