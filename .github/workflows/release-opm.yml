@@ -59,7 +59,10 @@ jobs:
           sudo ln -sf /usr/local/openresty/luajit/bin/luajit /usr/local/bin/luajit
           echo "/usr/local/openresty/bin" >> "$GITHUB_PATH"
           git clone --depth 1 https://github.com/openresty/opm "$RUNNER_TEMP/opm-cli"
-          ln -sfn /usr/local/openresty/site "$RUNNER_TEMP/opm-cli/site"
+          # opm locates the OpenResty installation via FindBin::RealBin/../site
+          # and installs dist.ini `requires` deps into it — give the clone its
+          # own writable throwaway site/ so nothing touches the system tree.
+          mkdir -p "$RUNNER_TEMP/opm-cli/site/lualib"
           echo "$RUNNER_TEMP/opm-cli/bin" >> "$GITHUB_PATH"
           luajit -v
           opm -V

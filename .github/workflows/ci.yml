@@ -100,9 +100,10 @@ jobs:
         run: |
           set -euo pipefail
           git clone --depth 1 https://github.com/openresty/opm "$RUNNER_TEMP/opm-cli"
-          # opm locates the OpenResty installation via FindBin::RealBin/../site;
-          # point the cloned tree at the apt-installed one.
-          ln -sfn /usr/local/openresty/site "$RUNNER_TEMP/opm-cli/site"
+          # opm locates the OpenResty installation via FindBin::RealBin/../site
+          # and installs dist.ini `requires` deps into it — give the clone its
+          # own writable throwaway site/ so nothing touches the system tree.
+          mkdir -p "$RUNNER_TEMP/opm-cli/site/lualib"
           echo "$RUNNER_TEMP/opm-cli/bin" >> "$GITHUB_PATH"
           opm -V
 
