@@ -100,6 +100,9 @@ jobs:
         run: |
           set -euo pipefail
           git clone --depth 1 https://github.com/openresty/opm "$RUNNER_TEMP/opm-cli"
+          # opm locates the OpenResty installation via FindBin::RealBin/../site;
+          # point the cloned tree at the apt-installed one.
+          ln -sfn /usr/local/openresty/site "$RUNNER_TEMP/opm-cli/site"
           echo "$RUNNER_TEMP/opm-cli/bin" >> "$GITHUB_PATH"
           opm -V
 

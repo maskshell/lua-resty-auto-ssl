@@ -45,9 +45,21 @@ jobs:
       - name: Install toolchain (opm CLI + luajit for opm build bytecode checks)
         run: |
           set -euo pipefail
+          # OpenResty from the official apt repo: provides the luajit that
+          # `opm build` bytecode-checks with, and the site/ tree that the
+          # cloned opm CLI resolves via FindBin::RealBin/../site.
           sudo apt-get update -qq
-          sudo apt-get install -y -qq luajit
+          sudo apt-get install -y -qq --no-install-recommends ca-certificates curl gnupg
+          curl -fsSL https://openresty.org/package/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/openresty.gpg
+          CODENAME="$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")"
+          echo "deb [signed-by=/usr/share/keyrings/openresty.gpg] http://openresty.org/package/ubuntu ${CODENAME} main" \
+            | sudo tee /etc/apt/sources.list.d/openresty.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openresty
+          sudo ln -sf /usr/local/openresty/luajit/bin/luajit /usr/local/bin/luajit
+          echo "/usr/local/openresty/bin" >> "$GITHUB_PATH"
           git clone --depth 1 https://github.com/openresty/opm "$RUNNER_TEMP/opm-cli"
+          ln -sfn /usr/local/openresty/site "$RUNNER_TEMP/opm-cli/site"
           echo "$RUNNER_TEMP/opm-cli/bin" >> "$GITHUB_PATH"
           luajit -v
           opm -V
