@@ -1,0 +1,219 @@
+name: release-gates
+
+# C4.1 of PLAN-opm-release.md (v2.1): CI gates for the dual-channel release.
+# Complements .github/workflows/main.yml (upstream dockerized test matrix,
+# intentionally untouched). This workflow asserts the release-facing
+# properties only:
+#   A2/B3 — require smoke on shallow (3-slash) and deep (>=5-slash) layouts
+#   A4/m4 — OCSP silent-skip fix CODE SHAPE present in lib (not a comment)
+#   M1    — repo tree shape + Lua-only `opm build` tarball incl. vendor/shell.lua
+#   R5    — sockproc source pin 92aba736 still compiles (gcc, ubuntu runner)
+#   A5/G4/M5 — `make install` into a clean prefix yields layout + exec bits
+#   A6/N2 — bin payload installed module-adjacent via scripts/install.sh
+#           resolves through the C2 helper on a real OpenResty
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Repo tree sanity (M1 — payload sources committed, built sockproc never committed)
+        run: |
+          set -euo pipefail
+          for f in bin/resty-auto-ssl/dehydrated \
+                   bin/resty-auto-ssl/letsencrypt_hooks \
+                   bin/resty-auto-ssl/start_sockproc \
+                   lib/resty/auto-ssl/vendor/shell.lua; do
+            test -f "$f" || { echo "::error::missing from repo tree: $f"; exit 1; }
+            git ls-files --error-unmatch "$f" > /dev/null 2>&1 \
+              || { echo "::error::present but NOT committed: $f"; exit 1; }
+          done
+          for f in bin/resty-auto-ssl/dehydrated \
+                   bin/resty-auto-ssl/letsencrypt_hooks \
+                   bin/resty-auto-ssl/start_sockproc; do
+            test -x "$f" || { echo "::error::not executable: $f"; exit 1; }
+          done
+          if git ls-files --error-unmatch bin/resty-auto-ssl/sockproc > /dev/null 2>&1; then
+            echo "::error::bin/resty-auto-ssl/sockproc must never be committed (C1.2)"
+            exit 1
+          fi
+          echo "repo tree OK"
+
+      - name: bash -n syntax check (bin scripts + install.sh)
+        run: |
+          set -euo pipefail
+          bash -n bin/resty-auto-ssl/dehydrated bin/resty-auto-ssl/start_sockproc bin/resty-auto-ssl/letsencrypt_hooks scripts/install.sh
+          echo "bash -n OK"
+
+      - name: OCSP silent-skip fix code shape (A4/m4 — assert code, not a marker comment)
+        run: |
+          set -euo pipefail
+          grep -F 'if not ocsp_url and not ocsp_responder_err' lib/resty/auto-ssl/ssl_certificate.lua
+          echo "OCSP fix code shape present"
+
+      - name: Install OpenResty (official openresty.org apt repo) and expose luajit
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends ca-certificates curl gnupg
+          curl -fsSL https://openresty.org/package/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/openresty.gpg
+          CODENAME="$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")"
+          echo "deb [signed-by=/usr/share/keyrings/openresty.gpg] http://openresty.org/package/ubuntu ${CODENAME} main" \
+            | sudo tee /etc/apt/sources.list.d/openresty.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openresty
+          # opm build bytecode-checks every .lua via `luajit` on PATH; reuse the
+          # one bundled with OpenResty instead of installing a second copy.
+          sudo ln -sf /usr/local/openresty/luajit/bin/luajit /usr/local/bin/luajit
+          echo "/usr/local/openresty/bin" >> "$GITHUB_PATH"
+          command -v resty
+          luajit -v
+
+      - name: Lua load smoke — shallow layout (A2/B3 regression gate, verbatim)
+        run: |
+          set -euo pipefail
+          resty -e 'package.path="lib/?.lua;"..package.path; local m=require("resty.auto-ssl"); assert(m.get_bin)'
+          echo "shallow-layout require OK (no eager lua_root 5-slash crash)"
+
+      - name: Lua load smoke — deep layout fixture (A2/B3, >=5-slash path via symlinked tree)
+        run: |
+          set -euo pipefail
+          FIXTURE="$RUNNER_TEMP/deep-fixture/a/b/c/d"
+          mkdir -p "$FIXTURE"
+          ln -sfn "$GITHUB_WORKSPACE/lib/resty" "$FIXTURE/resty"
+          DEEP_PATH="$FIXTURE/resty"
+          SLASHES="$(printf '%s' "$DEEP_PATH" | tr -cd '/' | wc -c | tr -d '[:space:]')"
+          echo "deep fixture path: $DEEP_PATH (slashes: $SLASHES)"
+          [ "$SLASHES" -ge 5 ] || { echo "::error::fixture path has fewer than 5 slashes"; exit 1; }
+          resty -e "package.path='$DEEP_PATH/?.lua;'..package.path; local m=require('resty.auto-ssl'); assert(m.get_bin)"
+          echo "deep-layout require OK"
+
+      - name: Install opm CLI (clone openresty/opm; core-perl + curl only)
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/openresty/opm "$RUNNER_TEMP/opm-cli"
+          echo "$RUNNER_TEMP/opm-cli/bin" >> "$GITHUB_PATH"
+          opm -V
+
+      - name: opm build dry-run with dummy ~/.opmrc + tarball inspection (M1/M4)
+        run: |
+          set -euo pipefail
+          # Dummy rc (M1/M3): account must match dist.ini repo_link; token is a
+          # format-valid dummy matching opm's ^[a-z0-9_]{40,255}$.
+          # upload_server/download_server are known opm rc keys and REQUIRED even
+          # for `opm build` (it installs `requires` deps via download_server).
+          umask 077
+          cat > "$HOME/.opmrc" <<EOF
+          github_account = maskshell
+          github_token = aaaabbbbccccddddeeeeffffgggghhhh00000000
+          upload_server = https://opm.openresty.org
+          download_server = https://opm.openresty.org
+          EOF
+          chmod 0600 "$HOME/.opmrc"
+          VERSION="$(sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*//p' dist.ini | head -n 1 | tr -d '[:space:]')"
+          [ -n "$VERSION" ] || { echo "::error::cannot parse version from dist.ini"; exit 1; }
+          TARBALL="lua-resty-auto-ssl-${VERSION}.tar.gz"
+          opm build
+          test -f "$TARBALL" || { echo "::error::opm build did not produce $TARBALL"; exit 1; }
+          echo "== tarball listing: $TARBALL =="
+          tar -tvzf "$TARBALL"
+          tar -tzf "$TARBALL" | sed "s#^lua-resty-auto-ssl-${VERSION}/##" | sort > "$RUNNER_TEMP/tar-entries.txt"
+          # (1) every expected .lua present (incl. vendored shell.lua) — and no extras (M1)
+          (find lib -name '*.lua' | sed 's#^lib/##' | sort) > "$RUNNER_TEMP/expected-lua.txt"
+          grep '\.lua$' "$RUNNER_TEMP/tar-entries.txt" | grep '^lib/' | sed 's#^lib/##' > "$RUNNER_TEMP/actual-lua.txt"
+          diff -u "$RUNNER_TEMP/expected-lua.txt" "$RUNNER_TEMP/actual-lua.txt" \
+            || { echo "::error::Lua payload mismatch vs lib/"; exit 1; }
+          grep -q '^lib/resty/auto-ssl/vendor/shell.lua$' "$RUNNER_TEMP/actual-lua.txt" \
+            || { echo "::error::vendor/shell.lua missing from tarball (M1 regression)"; exit 1; }
+          # (2) NO non-.lua files under lib/ (directory entries end in / and are exempt)
+          NON_LUA="$(grep -E '^lib/' "$RUNNER_TEMP/tar-entries.txt" | grep -vE '/$' | grep -vE '\.lua$' || true)"
+          if [ -n "$NON_LUA" ]; then
+            echo "::error::non-.lua files under lib/ in tarball:"; echo "$NON_LUA"; exit 1
+          fi
+          # (3) no stray markdown: with doc_dir=lib only the opm root-doc special
+          #     cases (README.*, Changes.*) may ship; CHANGELOG.md must NOT (M4/F9)
+          STRAY_DOCS="$(grep -E '\.(md|markdown|pod)$' "$RUNNER_TEMP/tar-entries.txt" | grep -vE '^(README|Changes)\.' || true)"
+          if [ -n "$STRAY_DOCS" ]; then
+            echo "::error::stray docs in tarball (doc_dir=lib regression):"; echo "$STRAY_DOCS"; exit 1
+          fi
+          # (4) dist.ini present; bin/scripts payload must NOT leak into the Lua-only channel
+          grep -q '^dist.ini$' "$RUNNER_TEMP/tar-entries.txt" \
+            || { echo "::error::dist.ini missing from tarball"; exit 1; }
+          LEAK="$(grep -E '^(bin|scripts)/' "$RUNNER_TEMP/tar-entries.txt" || true)"
+          if [ -n "$LEAK" ]; then
+            echo "::error::bin/scripts payload leaked into OPM tarball:"; echo "$LEAK"; exit 1
+          fi
+          echo "opm build dry-run + tar inspection OK (version $VERSION, Lua-only channel intact)"
+
+      - name: sockproc source-pin compile smoke (R5 — pin rot fails loudly)
+        run: |
+          set -euo pipefail
+          # Source repo pinned in Makefile SOCKPROC_VERSION (juce/sockproc).
+          PIN=92aba736027bb5d96e190b71555857ac5bb6b2be
+          SRC="$RUNNER_TEMP/sockproc-smoke"
+          rm -rf "$SRC"
+          mkdir -p "$SRC"
+          # curl -f: HTTP failure (pin removed upstream) must fail this step loudly
+          curl -fsSLo "$SRC/sockproc-$PIN.tar.gz" "https://github.com/juce/sockproc/archive/$PIN.tar.gz"
+          tar -xzf "$SRC/sockproc-$PIN.tar.gz" -C "$SRC"
+          make -C "$SRC/sockproc-$PIN"
+          test -x "$SRC/sockproc-$PIN/sockproc"
+          file "$SRC/sockproc-$PIN/sockproc" | grep -qi ELF
+          echo "sockproc @ $PIN compiled OK"
+
+      - name: A5 — make install into clean prefix (G4/M5 — Makefile channel still works)
+        run: |
+          set -euo pipefail
+          PREFIX="$RUNNER_TEMP/a5-prefix/clean"
+          make all
+          make install "INST_LUADIR=$PREFIX/lualib" "INST_BINDIR=$PREFIX/bin"
+          test -f "$PREFIX/lualib/resty/auto-ssl.lua"
+          test -f "$PREFIX/lualib/resty/auto-ssl/ssl_certificate.lua"
+          test -f "$PREFIX/lualib/resty/auto-ssl/vendor/shell.lua"
+          for f in dehydrated letsencrypt_hooks start_sockproc sockproc; do
+            test -x "$PREFIX/bin/resty-auto-ssl/$f" \
+              || { echo "::error::not installed or not executable: $f"; exit 1; }
+          done
+          echo "make install layout + exec bits OK"
+
+      - name: A6 — install.sh module-adjacent integration via C2 helper (real OpenResty)
+        run: |
+          set -euo pipefail
+          # Assemble the same layout the release bin asset has (sockproc reuses
+          # the build/ output from `make all` in the A5 step; dehydrated comes
+          # committed from the repo tree).
+          STAGE="$RUNNER_TEMP/a6-asset"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE/bin/resty-auto-ssl"
+          install -m 0755 bin/resty-auto-ssl/dehydrated "$STAGE/bin/resty-auto-ssl/dehydrated"
+          install -m 0755 bin/resty-auto-ssl/letsencrypt_hooks "$STAGE/bin/resty-auto-ssl/letsencrypt_hooks"
+          install -m 0755 bin/resty-auto-ssl/start_sockproc "$STAGE/bin/resty-auto-ssl/start_sockproc"
+          install -m 0755 build/bin/sockproc "$STAGE/bin/resty-auto-ssl/sockproc"
+          install -m 0755 scripts/install.sh "$STAGE/install.sh"
+          # Simulate an OPM-installed resty/ lualib dir (the install.sh contract).
+          TARGET="$RUNNER_TEMP/a6-target/prefix/resty_modules/lualib/resty"
+          mkdir -p "$TARGET"
+          cp lib/resty/auto-ssl.lua "$TARGET/auto-ssl.lua"
+          cp -R lib/resty/auto-ssl "$TARGET/auto-ssl"
+          bash "$STAGE/install.sh" "$TARGET"
+          # C2 helper must resolve the three Lua-resolved bins module-adjacent
+          # (N2: sockproc is resolved by start_sockproc's script-relative logic,
+          # not from Lua — asserted as installed + executable below).
+          for name in dehydrated letsencrypt_hooks start_sockproc; do
+            P="$(resty -e "package.path='$(dirname "$TARGET")/?.lua;'..package.path; local m=require('resty.auto-ssl'); print(assert(m.get_bin('$name')))")"
+            echo "get_bin('$name') -> $P"
+            test -x "$P" || { echo "::error::get_bin('$name') path not executable: $P"; exit 1; }
+            case "$P" in
+              "$TARGET"/auto-ssl/bin/resty-auto-ssl/*) : ;;
+              *) echo "::error::get_bin('$name') did not resolve module-adjacent: $P"; exit 1 ;;
+            esac
+          done
+          test -x "$TARGET/auto-ssl/bin/resty-auto-ssl/sockproc" \
+            || { echo "::error::sockproc not installed executable module-adjacent"; exit 1; }
+          echo "A6 OK: bin payload installed via install.sh and resolved module-adjacent"

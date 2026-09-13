@@ -35,16 +35,89 @@ Used in production (but the internal APIs might still be in flux).
 
 ## Installation
 
+As of 0.14.0, this fork is distributed through two complementary channels:
+
+- **Channel A — OPM (Lua code only):** [`opm get maskshell/lua-resty-auto-ssl`](https://opm.openresty.org/package/maskshell/lua-resty-auto-ssl/) installs the Lua library, loadable out of the box. OPM packages ship pure Lua files only (the opm toolchain filters out non-Lua payload), so the executable binaries are not included.
+- **Channel B — GitHub Release bin asset:** each release carries `resty-auto-ssl-bin-<version>-linux-amd64.tar.gz` containing `bin/resty-auto-ssl/{dehydrated,letsencrypt_hooks,start_sockproc,sockproc}` (executable bits preserved) plus an `install.sh` script that installs that payload next to the Lua library.
+
+A linux-amd64 OpenResty host needs **both channels** for full functionality: Channel A provides the Lua module, Channel B provides `dehydrated` and `sockproc`. `sockproc` is not distributed via OPM at all; on other architectures, build from source via the Makefile or supply your own binary through the [`bin_dir` override](#bin_dir-override) below.
+
 Requirements:
 
 - [OpenResty](http://openresty.org/#Download) 1.9.7.2 or higher
   - **Recommended:** OpenResty 1.15.8.1 or higher is recommended for best performance and stability.
   - Or nginx patched with [ssl_cert_cb_yield](https://github.com/openresty/openresty/blob/v1.11.2.2/patches/nginx-1.11.2-ssl_cert_cb_yield.patch) and built with [ngx_lua](https://github.com/openresty/lua-nginx-module#installation) 0.10.0 or higher
 - OpenSSL 1.0.2e or higher
-- [LuaRocks](http://openresty.org/#UsingLuaRocks)
-- gcc, make (for initial install via LuaRocks)
+- [opm](https://opm.openresty.org) (for Channel A) or [LuaRocks](http://openresty.org/#UsingLuaRocks) (alternative install path, see below)
+- gcc, make (for installing via LuaRocks, or for building `sockproc` from source on non-linux-amd64 systems)
 - bash, curl, diff, find, grep, mktemp, sed (these are generally pre-installed on most systems, but may not be included in some minimal containers)
 
+### Channel A: Install the Lua library via opm
+
+```sh
+$ opm get maskshell/lua-resty-auto-ssl
+```
+
+Depending on how opm was invoked, the module lands in one of two layouts:
+
+- System-wide (`opm get`): `/usr/local/openresty/site/lualib/resty/` (containing `auto-ssl.lua` and `auto-ssl/`).
+- Project-local (`opm --cwd get`): `./resty_modules/lualib/resty/` (same structure).
+
+Wire the matching layout into nginx's `http` block with `lua_package_path` — it must point at the directory *containing* `resty/` (the trailing `;;` preserves the default search paths):
+
+System-wide layout:
+
+```nginx
+http {
+  lua_package_path "/usr/local/openresty/site/lualib/?.lua;;";
+  ...
+}
+```
+
+Project-local `--cwd` layout:
+
+```nginx
+http {
+  lua_package_path "./resty_modules/lualib/?.lua;;";
+  ...
+}
+```
+
+> **Note:** `--cwd` installs crashed at require time before 0.14.0; this is fixed in 0.14.0.
+
+### Channel B: Install the bin payload from GitHub Releases
+
+Download and extract the release asset, then run the bundled `install.sh`. The script takes a single argument: the `resty/` lualib directory that contains **both** `auto-ssl.lua` and the `auto-ssl/` package directory. It installs the bin payload (`dehydrated`, `letsencrypt_hooks`, `start_sockproc`, `sockproc`) into `<target>/auto-ssl/bin/resty-auto-ssl/` — the module-adjacent location resolved automatically by the module (see the [`bin_dir` override](#bin_dir-override) below for resolution details) — and fails fast unless `<target>/auto-ssl.lua` and `<target>/auto-ssl/` both exist.
+
+System-wide layout (note `sudo` for system-wide prefixes):
+
+```sh
+$ curl -LO https://github.com/maskshell/lua-resty-auto-ssl/releases/download/v0.14.0/resty-auto-ssl-bin-0.14.0-linux-amd64.tar.gz
+$ tar -xzf resty-auto-ssl-bin-0.14.0-linux-amd64.tar.gz
+$ cd <extracted-directory>  # contains install.sh and bin/resty-auto-ssl/
+$ sudo ./install.sh /usr/local/openresty/site/lualib/resty
+```
+
+Project-local `--cwd` layout (no `sudo` needed for paths inside your project):
+
+```sh
+$ ./install.sh ./resty_modules/lualib/resty
+```
+
+The bin asset is linux-amd64 only. On other architectures, build from source via the Makefile or supply your own binary through the [`bin_dir` override](#bin_dir-override) below.
+
+### Migrating from GUI/lua-resty-auto-ssl
+
+The two packages install into identical lualib paths, and opm has no replace semantics, so remove the upstream package **first**:
+
+```sh
+$ opm rm GUI/lua-resty-auto-ssl
+$ opm get maskshell/lua-resty-auto-ssl
+```
+
+### Installing via LuaRocks (or from source)
+
+The LuaRocks/Makefile install path continues to work unchanged (the legacy `<lua_root>/bin/resty-auto-ssl/` binary location is still resolved). One path note for source builds: the bin sources now live under `bin/resty-auto-ssl/` in the repository.
 
 ```sh
 $ sudo luarocks install lua-resty-auto-ssl
@@ -54,6 +127,22 @@ $ sudo luarocks install lua-resty-auto-ssl
 $ sudo mkdir /etc/resty-auto-ssl
 $ sudo chown www-data /etc/resty-auto-ssl
 ```
+
+### `bin_dir` override
+
+By default, the module resolves `dehydrated`, `letsencrypt_hooks`, and `start_sockproc` in this order:
+
+1. The explicit `bin_dir` option, if set (absolute path; the directory that directly contains those files).
+2. Module-adjacent: `<X>/resty/auto-ssl/bin/resty-auto-ssl/` for a module at `<X>/resty/auto-ssl.lua` — where Channel B's `install.sh` installs.
+3. The legacy `<lua_root>/bin/resty-auto-ssl/` location (LuaRocks installs).
+
+*Example:*
+
+```lua
+auto_ssl:set("bin_dir", "/some/absolute/path/to/bin/resty-auto-ssl")
+```
+
+`sockproc` is a special case: it is never referenced from Lua — the `start_sockproc` bash script locates it relative to its own location. A custom `sockproc` (for example, one built for another architecture) must sit in the same directory as `start_sockproc`, i.e. inside the directory `bin_dir` points to (or whichever of the resolution locations above applies).
 
 Implement the necessary configuration inside your nginx config. Here is a minimal example:
 
