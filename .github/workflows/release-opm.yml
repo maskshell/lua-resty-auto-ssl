@@ -8,7 +8,7 @@ name: release-opm
 #               OPM_GITHUB_TOKEN (C4.3), NEVER with -v (M2: verbose echoes the
 #               X-Account/X-Token headers via curl -vv).
 #   VERIFY (N4/B1/R1) — opm indexes uploads asynchronously; poll the published
-#               tarball URL with backoff (up to 60 min) until fetchable, then
+#               tarball URL with backoff (up to 180 min) until fetchable, then
 #               validate the RE-DOWNLOADED artifact (never trust upload exit code).
 # One-time repo secrets (C4.3): OPM_ACCOUNT=maskshell, OPM_GITHUB_TOKEN
 # (GitHub PAT with scopes user:email + read:org ONLY).
@@ -170,7 +170,7 @@ jobs:
           opm upload
           echo "opm upload submitted for $VERSION (indexing is asynchronous)"
 
-      - name: VERIFY published OPM artifact (N4 — poll <= 60 min, inspect re-download)
+      - name: VERIFY published OPM artifact (N4 — poll <= 180 min, inspect re-download)
         run: |
           set -euo pipefail
           URL="https://opm.openresty.org/api/pkg/tarball/maskshell/lua-resty-auto-ssl-${VERSION}.opm.tar.gz"
@@ -178,7 +178,7 @@ jobs:
           rm -rf "$TMP"
           mkdir -p "$TMP"
           echo "polling $URL"
-          DEADLINE=$((SECONDS + 3600))
+          DEADLINE=$((SECONDS + 10800))
           DELAY=15
           while :; do
             CODE="$(curl -sS -o "$TMP/probe.bin" -w '%{http_code}' "$URL")" || CODE=000
@@ -186,7 +186,7 @@ jobs:
               break
             fi
             if [ "$SECONDS" -ge "$DEADLINE" ]; then
-              echo "::error::published tarball not fetchable after 60 min (last HTTP status: $CODE)"
+              echo "::error::published tarball not fetchable after 180 min (last HTTP status: $CODE) — opm upload was accepted; the server-side indexer is lagging or failed (page listing vs tarball API can diverge). Confirm manually or retry via a new tag."
               exit 1
             fi
             echo "not indexed yet (HTTP $CODE); retrying in ${DELAY}s"
