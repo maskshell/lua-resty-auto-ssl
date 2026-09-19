@@ -1,16 +1,18 @@
 name: release-gates
 
-# C4.1 of PLAN-opm-release.md (v2.1): CI gates for the dual-channel release.
-# Complements .github/workflows/main.yml (upstream dockerized test matrix,
-# intentionally untouched). This workflow asserts the release-facing
-# properties only:
-#   A2/B3 — require smoke on shallow (3-slash) and deep (>=5-slash) layouts
-#   A4/m4 — OCSP silent-skip fix CODE SHAPE present in lib (not a comment)
-#   M1    — repo tree shape + Lua-only `opm build` tarball incl. vendor/shell.lua
-#   R5    — sockproc source pin 92aba736 still compiles (gcc, ubuntu runner)
-#   A5/G4/M5 — `make install` into a clean prefix yields layout + exec bits
-#   A6/N2 — bin payload installed module-adjacent via scripts/install.sh
-#           resolves through the C2 helper on a real OpenResty
+# Two jobs:
+#   gates — release-facing property asserts (from PLAN-opm-release.md v2.1):
+#     A2/B3 — require smoke on shallow (3-slash) and deep (>=5-slash) layouts
+#     A4/m4 — OCSP silent-skip fix CODE SHAPE present in lib (not a comment)
+#     M1    — repo tree shape + Lua-only `opm build` tarball incl. vendor/shell.lua
+#     R5    — sockproc source pin 92aba736 still compiles (gcc, ubuntu runner)
+#     A5/G4/M5 — `make install` into a clean prefix yields layout + exec bits
+#     A6/N2 — bin payload installed module-adjacent via scripts/install.sh
+#             resolves through the C2 helper on a real OpenResty
+#   test  — busted spec subset under a real, current OpenResty container
+#     (Dockerfile-test-ci, repo mounted at /app, no ngrok). The modernized
+#     successor of the retired upstream matrix; ngrok-tunnel-dependent
+#     specs are excluded via the Makefile TEST_CI_SPECS list.
 
 on:
   push:
@@ -223,3 +225,18 @@ jobs:
           test -x "$TARGET/auto-ssl/bin/resty-auto-ssl/sockproc" \
             || { echo "::error::sockproc not installed executable module-adjacent"; exit 1; }
           echo "A6 OK: bin payload installed via install.sh and resolved module-adjacent"
+
+  test:
+    # Busted spec subset under a real, current OpenResty container, without
+    # ngrok (RESTY_AUTO_SSL_TEST_NO_NGROK=1). Repo mounted at /app because
+    # spec/config/busted-nginx.conf hardcodes /app paths.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build test image (pinned current OpenResty, baked test deps)
+        run: docker build -t lras-test -f Dockerfile-test-ci .
+
+      - name: Run CI spec subset under real OpenResty (no ngrok)
+        run: docker run --rm -v "$PWD:/app" -w /app lras-test make test-ci

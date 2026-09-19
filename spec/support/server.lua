@@ -47,6 +47,13 @@ local function kill(proc)
 end
 
 local function start_ngrok()
+  -- CI mode without ngrok (see the Makefile "test-ci" target and the "test"
+  -- job in .github/workflows/ci.yml): skip the tunnel entirely. Specs that
+  -- need server.ngrok_hostname at runtime must NOT be in the test-ci list.
+  if os.getenv("RESTY_AUTO_SSL_TEST_NO_NGROK") == "1" then
+    return
+  end
+
   if not _M.ngrok_hostname then
     assert(dir.makepath(_M.ngrok_test_dir))
     local ngrok_process, exec_err = process.exec("ngrok", { "http", "9080", "--log", _M.ngrok_test_dir .. "/ngrok.log", "--log-format", "logfmt", "--log-level", "debug" })
