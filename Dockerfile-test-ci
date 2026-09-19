@@ -14,7 +14,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         bash coreutils curl diffutils grep openssl sed \
-        ca-certificates gcc git lsof lua5.2 make procps redis-server sudo unzip && \
+        ca-certificates gcc git lsof lua5.2 make procps redis-server sudo tzdata unzip && \
     rm -rf /var/lib/apt/lists/*
 
 RUN mkdir /app
