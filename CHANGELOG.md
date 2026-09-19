@@ -1,5 +1,16 @@
 # lua-resty-auto-ssl Change Log
 
+## Unreleased
+
+### Changed
+
+- CI: added a `test` job to the release-gates workflow running a busted spec
+  subset under a real, current OpenResty container (`Dockerfile-test-ci`,
+  repo mounted at `/app`, no ngrok via `RESTY_AUTO_SSL_TEST_NO_NGROK=1` and
+  the audited `TEST_CI_SPECS` list in the Makefile). Retired the inherited
+  upstream docker-matrix workflow that hard-failed on the deprecated
+  `actions/upload-artifact@v1` and the removed `docker-compose` v1 binary.
+
 ## 0.14.0 - 2026-09-13
 
 ### Upgrade Notes

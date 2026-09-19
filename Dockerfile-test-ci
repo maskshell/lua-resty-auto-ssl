@@ -1,0 +1,36 @@
+# CI test image: current OpenResty + baked test dependencies, no ngrok.
+# Used by the "test" job in .github/workflows/ci.yml via `make test-ci`.
+# Modern replacement for the 2019-era Dockerfile-test-ubuntu (bionic base,
+# dead equinox.io ngrok channel). The repo is mounted at /app at run time
+# because spec/config/busted-nginx.conf hardcodes /app paths.
+FROM openresty/openresty:1.31.1.1-1-noble
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Runtime deps (Makefile RUNTIME_DEPENDENCIES) + build/test tooling.
+# gcc: luaposix/process C builds (install-test-deps) and the sockproc source
+# build inside `luarocks make` (rockspec is type=make); procps: pkill in
+# spec/support/server.lua; unzip + ca-certificates: luarocks fetch/unpack.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        bash coreutils curl diffutils grep openssl sed \
+        ca-certificates gcc git lsof lua5.2 make procps redis-server sudo tzdata unzip && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN mkdir /app
+WORKDIR /app
+
+# Bake the test dependency tree (busted 2.0.0, luaposix, process, ...) into
+# an image layer; the repo itself is volume-mounted at run time. Some rocks
+# (e.g. process-1.9.0) clone via the git:// protocol, which GitHub has shut
+# down — rewrite every git:// URL to https:// before fetching.
+COPY Makefile /app/Makefile
+RUN git config --global url."https://".insteadOf "git://" && \
+    make install-test-deps
+
+# The three env lines the suite requires (mirrors the old Dockerfile-test):
+# busted on PATH, and LUA_PATH/LUA_CPATH — spec/support/server.lua rewrites
+# LUA_PATH for the nginx child to strip this prefix.
+ENV PATH="/tmp/resty-auto-ssl-test-luarocks/bin:${PATH}"
+ENV LUA_PATH="/tmp/resty-auto-ssl-test-luarocks/share/lua/5.1/?.lua;/tmp/resty-auto-ssl-test-luarocks/share/lua/5.1/?/init.lua;${LUA_PATH}"
+ENV LUA_CPATH="/tmp/resty-auto-ssl-test-luarocks/lib/lua/5.1/?.so;${LUA_CPATH}"

@@ -16,6 +16,7 @@ RUNTIME_DEPENDENCIES:=bash curl cut date diff grep mktemp openssl sed
 	install-test-deps \
 	lint \
 	test \
+	test-ci \
 	release
 
 all: \
@@ -105,6 +106,24 @@ test:
 	luarocks --tree=/tmp/resty-auto-ssl-server-luarocks make ./lua-resty-auto-ssl-git-1.rockspec
 	luarocks --tree=/tmp/resty-auto-ssl-server-luarocks install dkjson 2.5-2
 	busted ./spec
+
+# CI spec subset: runs without ngrok (RESTY_AUTO_SSL_TEST_NO_NGROK=1 skips
+# the tunnel in spec/support/server.lua). The list is the explicit set of
+# specs that never reference server.ngrok_hostname — keep it audited and
+# grow it only after checking a spec does not need the tunnel.
+TEST_CI_SPECS = \
+	spec/bin_resolution_spec.lua \
+	spec/hook_secret_spec.lua \
+	spec/hook_server_spec.lua \
+	spec/parse_openssl_time_spec.lua \
+	spec/sockproc_file_descriptors_spec.lua
+
+test-ci:
+	luarocks --tree=/tmp/resty-auto-ssl-test-luarocks make ./lua-resty-auto-ssl-git-1.rockspec
+	rm -rf /tmp/resty-auto-ssl-server-luarocks
+	luarocks --tree=/tmp/resty-auto-ssl-server-luarocks make ./lua-resty-auto-ssl-git-1.rockspec
+	luarocks --tree=/tmp/resty-auto-ssl-server-luarocks install dkjson 2.5-2
+	RESTY_AUTO_SSL_TEST_NO_NGROK=1 busted $(TEST_CI_SPECS)
 
 release:
 	# Ensure the rockspec has been renamed and updated.
